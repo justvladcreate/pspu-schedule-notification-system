@@ -41,17 +41,25 @@ def setup_logging(logs_file: str = "info.log"):
             pass
 
 
-@dataclass
-class BotSetup:
-   
-    load_env_file()
-    config = load_config_from_yaml()
+setup_logging()
 
-    TOKEN: str = config['testing_bot_token']
-    # CHANNEL_CHAT_ID: int = -1003206831079
-    # DATABASE_URL: str = "sqlite:///users.db"
-    
-    # Объект бота
-    BOT = Bot(token=TOKEN)
-    # Диспетчер
-    DP = Dispatcher()
+class BotConfig:
+    def __init__(self):
+        load_env_file()
+        config = load_config_from_yaml()
+
+        TOKEN: str = config['testing_bot_token']
+        # CHANNEL_CHAT_ID: int = -1003206831079 #main channel
+        CHANNEL_CHAT_ID: int = -1003862286446 #testing channel
+        DATABASE_URL: str = "sqlite:///users.db"
+        
+        # Объект бота
+        self.BOT = Bot(token=TOKEN)
+        # Диспетчер
+        self.DP = Dispatcher()
+
+    async def send_message_to_user(self, user_id: int, text: str) -> None:
+        try:
+            await self.BOT.send_message(chat_id=user_id, text=text)
+        except Exception as e:
+            print(f"Ошибка при отправке: {e}")
