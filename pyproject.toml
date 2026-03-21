@@ -1,0 +1,9 @@
+[project]
+name = "pspu-schedule-notification-system"
+version = "0.1.0"
+description = "Телеграм бот для отслеживания и отправки уведомлений об изменениях в расписании"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=3.0.1",
+]
