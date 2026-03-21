@@ -7,10 +7,9 @@
 
 import logging
 import asyncio
-from bot.start_bot import run
+import bot.start_bot
 from config import BotConfig
 from parser.process import process_schedule
-
 
 bot_config = BotConfig()
 
@@ -20,7 +19,6 @@ logger.info("Новый запуск основного скрипта.")
 print("Используйте Ctrl+C чтобы остановить скрипт...")
 
 CHECK_CHANGES_TIMER: int = 900
-
 
 async def timer():
     timer_running = True
@@ -34,8 +32,8 @@ async def timer():
     
 
 async def main():
+    await bot.start_bot.run()
     asyncio.create_task(timer())
-    await run()
 
 
 

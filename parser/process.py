@@ -2,7 +2,7 @@
 from .extractor import DataExtractor
 from .preprocess import DataParser
 from .postprocess import DataManager
-from ..bot.middleware.messages import send_channel_post, send_user_notification
+from bot.middleware.messages import send_channel_post, send_user_notification
 from pathlib import Path
 from collections import defaultdict
 import json
