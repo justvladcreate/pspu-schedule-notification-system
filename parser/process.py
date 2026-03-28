@@ -7,6 +7,7 @@ from pathlib import Path
 from collections import defaultdict
 import json
 import logging
+from google.auth.exceptions import RefreshError
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ manager = DataManager()
 
 async def process_schedule():
     """Основной метод обработки расписания"""
+    logger.info("Начата обработка расписания")
     try:
         
         current_dir = Path(__file__).resolve().parent.parent
@@ -63,7 +65,7 @@ async def _handle_files(excel_path, old_excel_path):
             if not (excel_path.exists() and excel_path.is_file()):
                 await data_extractor.download_file(excel_path)
         else:
-            data_extractor.delete_old_file(excel_path, max_time=0)
+            if excel_path.exists(): data_extractor.delete_old_file(excel_path, max_time=0)
             if not (excel_path.exists() and excel_path.is_file()):
                 await data_extractor.download_file(excel_path)
         return True
@@ -73,6 +75,9 @@ async def _handle_files(excel_path, old_excel_path):
         if not (excel_path.exists() and excel_path.is_file()):
             await data_extractor.download_file(excel_path)
         return True
+    except RefreshError as e:
+        logger.error(f"Клиент credentials Oauth не найден или устаревший token: {e}")
+        return False
     except Exception as e:
         logger.error(f"Ошибка при работе с файлами: {e}")
         return False

@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-logger.info("Настриваем проверку сообщений...")
+logger.info("Настраиваем проверку сообщений...")
 
 
 @router.message(F.text == 'Запустить парсер')
