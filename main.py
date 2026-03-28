@@ -11,6 +11,8 @@ import bot.start_bot
 from config import BotConfig
 from parser.process import process_schedule
 
+import aiogram
+
 bot_config = BotConfig()
 
 logger = logging.getLogger(__name__)

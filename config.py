@@ -44,17 +44,20 @@ def setup_logging(logs_file: str = "info.log"):
 setup_logging()
 
 class BotConfig:
-    def __init__(self):
-        load_env_file()
-        config = load_config_from_yaml()
+    load_env_file()
+    config = load_config_from_yaml()
+    admins_str = str(config.get('admin_ids', ''))
+    ADMINS = []
+    if admins_str:
+        ADMINS = [int(x.strip()) for x in admins_str.split(',')]
+    TOKEN: str = config['testing_bot_token']
+    # CHANNEL_CHAT_ID: int = -1003206831079 #main channel
+    CHANNEL_CHAT_ID: int = -1003862286446  # testing channel
+    DATABASE_URL: str = "sqlite:///users.db"
 
-        TOKEN: str = config['testing_bot_token']
-        # CHANNEL_CHAT_ID: int = -1003206831079 #main channel
-        CHANNEL_CHAT_ID: int = -1003862286446 #testing channel
-        DATABASE_URL: str = "sqlite:///users.db"
-        
+    def __init__(self):
         # Объект бота
-        self.BOT = Bot(token=TOKEN)
+        self.BOT = Bot(token=self.TOKEN)
         # Диспетчер
         self.DP = Dispatcher()
 

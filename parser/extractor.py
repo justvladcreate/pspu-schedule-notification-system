@@ -9,6 +9,7 @@ from pathlib import Path
 import time
 import re
 import aiofiles
+import asyncio
 
 class DataExtractor:
     def __init__(self):
@@ -18,31 +19,26 @@ class DataExtractor:
         self.token_file = current_dir / 'private\\token.json'
         self.credentials_file = current_dir / 'private\\credentials.json'
 
-    
-
     async def get_service(self):
         creds = None
         try:
             creds = Credentials.from_authorized_user_file(self.token_file, self.SCOPES)
         except:
             pass
-
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
                 flow = InstalledAppFlow.from_client_secrets_file(self.credentials_file, self.SCOPES)
                 creds = flow.run_local_server(port=0)
-
             async with aiofiles.open(self.token_file, 'w') as token:
-                token.write(creds.to_json())
-
-        return build('drive', 'v3', credentials=creds, cache_discovery=False)
+                await token.write(creds.to_json())
+        service = build('drive', 'v3', credentials=creds, cache_discovery=False)
+        return service, creds  # возвращаем и creds
     
-    def get_sheets_metadata(self):
-        service = self.get_service()
-        
-        sheets_service = build('sheets', 'v4', credentials=service._http.credentials, cache_discovery=False)
+    async def get_sheets_metadata(self):
+        service, creds = await self.get_service()
+        sheets_service = build('sheets', 'v4', credentials=creds, cache_discovery=False)
         
         try:
             spreadsheet = sheets_service.spreadsheets().get(
@@ -65,45 +61,60 @@ class DataExtractor:
             print(f"Ошибка при получении метаданных листов: {e}")
             return {}
 
-    async def download_file(self, excel_path):
-        service = self.get_service()
+    def _sync_download(self, excel_path):
+        # Получаем учётные данные синхронно
+        creds = None
+        try:
+            creds = Credentials.from_authorized_user_file(self.token_file, self.SCOPES)
+        except:
+            pass
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(self.credentials_file, self.SCOPES)
+                creds = flow.run_local_server(port=0)
+            # Сохраняем токен синхронно
+            with open(self.token_file, 'w') as token:
+                token.write(creds.to_json())
 
+        # Строим сервис и скачиваем
+        service = build('drive', 'v3', credentials=creds, cache_discovery=False)
         request = service.files().export_media(
-        fileId=self.file_id,
-        mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            fileId=self.file_id,
+            mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-
-        async with aiofiles.open(excel_path, 'wb') as file:
-            downloader = MediaIoBaseDownload(file, request)
-            
+        with open(excel_path, 'wb') as f:
+            downloader = MediaIoBaseDownload(f, request)
             done = False
             while not done:
                 status, done = downloader.next_chunk()
                 print(f"Download progress: {int(status.progress() * 100)}%")
-        
-            print(f"Файл сохранён как: {excel_path}")
-    
+
+    async def download_file(self, excel_path):
+        await asyncio.to_thread(self._sync_download, excel_path)
+
 
     def delete_old_file(self, file_path, max_time=600):
         path = Path(file_path)
-        
+
         if not path.exists():
             return
-        
+
         file_time = path.stat().st_mtime
         current_time = time.time()
-        
+
         if current_time - file_time > max_time:
             old_file_path = path.parent / f"old_{path.name}"
-            
+
             if old_file_path.exists():
                 old_file_path.unlink()
-            
+
             path.rename(old_file_path)
 
-    
-    def extract(self, file_path):
-        sheets_metadata = self.get_sheets_metadata()
+
+    async def extract(self, file_path):
+        sheets_metadata = await self.get_sheets_metadata()
         
         xls = pd.ExcelFile(file_path)
         groups_info = {}
