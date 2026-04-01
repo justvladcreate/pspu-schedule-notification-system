@@ -38,7 +38,8 @@ async def process_schedule():
         
         groups_info = await data_extractor.extract(excel_path)
         groups_info = parser.parse(groups_info)
-        
+
+        print("ХАХАХАХ")
         # Сохранение данных
         _save_data(groups_info, groups_info_old)
         
@@ -71,7 +72,7 @@ async def _handle_files(excel_path, old_excel_path):
         return True
                 
     except PermissionError:
-        logger.error("Не удалось удалить старый и скачать новый файлы, пропускаем.")
+        logger.error("Не удалось удалить старый и скачать новый файлы - нет прав, пропускаем.")
         if not (excel_path.exists() and excel_path.is_file()):
             await data_extractor.download_file(excel_path)
         return True
