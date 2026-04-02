@@ -39,7 +39,7 @@ async def process_schedule():
         groups_info = await data_extractor.extract(excel_path)
         groups_info = parser.parse(groups_info)
 
-        print("ХАХАХАХ")
+        # print("ХАХАХАХ")
         # Сохранение данных
         _save_data(groups_info, groups_info_old)
         
