@@ -7,7 +7,6 @@
 
 import logging
 import asyncio
-import bot.start_bot
 from config import BotConfig
 from parser.process import process_schedule
 
@@ -24,19 +23,30 @@ CHECK_CHANGES_TIMER: int = 900
 
 async def timer():
     timer_running = True
-    
+
     while timer_running:
-        await asyncio.sleep(CHECK_CHANGES_TIMER) 
-        
+        await asyncio.sleep(CHECK_CHANGES_TIMER)
+
         logger.info("Запуск парсера...")
-        
+
         await process_schedule()
-    
+
 
 async def main():
-    await bot.start_bot.run()
-    asyncio.create_task(timer())
+    from bot.start_bot import bot, dp
+    from bot.handlers import basic_handlers, keyboard_handlers
 
+    dp.include_router(basic_handlers.router)
+    dp.include_router(keyboard_handlers.router)
+
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Слушаем новые события...")
+
+    # Запускаем таймер и polling параллельно
+    await asyncio.gather(
+        dp.start_polling(bot),
+        timer()
+    )
 
 
 if __name__ == "__main__":

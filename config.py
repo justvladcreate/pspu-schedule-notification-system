@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from dataclasses import dataclass
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 
 
 def load_env_file(path="private/.env"):
@@ -58,8 +59,8 @@ class BotConfig:
     def __init__(self):
         # Объект бота
         self.BOT = Bot(token=self.TOKEN)
-        # Диспетчер
-        self.DP = Dispatcher()
+        # Диспетчер с FSM storage
+        self.DP = Dispatcher(storage=MemoryStorage())
 
     async def send_message_to_user(self, user_id: int, text: str) -> None:
         try:

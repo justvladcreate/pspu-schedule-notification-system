@@ -11,51 +11,56 @@ from google.auth.exceptions import RefreshError
 
 logger = logging.getLogger(__name__)
 
-
 data_extractor = DataExtractor()
 parser = DataParser()
 manager = DataManager()
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
 async def process_schedule():
     """Основной метод обработки расписания"""
     logger.info("Начата обработка расписания")
     try:
-        
-        current_dir = Path(__file__).resolve().parent.parent
+        excel_path = DATA_DIR / "pspu_schedule_latest.xlsx"
+        old_excel_path = DATA_DIR / "old_pspu_schedule_latest.xlsx"
 
-        excel_path = Path(current_dir / "data\\pspu_schedule_latest.xlsx")
-        old_excel_path = Path(current_dir / "data\\old_pspu_schedule_latest.xlsx")
-        
         # Загрузка и обработка файлов
         if not await _handle_files(excel_path, old_excel_path):
             logger.error("Не удалось обработать файлы")
             return False
-        
-        # Извлечение данных
-        groups_info_old = await data_extractor.extract(old_excel_path)
-        groups_info_old = parser.parse(groups_info_old)
-        
+
+        # Извлечение данных из нового файла
         groups_info = await data_extractor.extract(excel_path)
         groups_info = parser.parse(groups_info)
 
-        print("ХАХАХАХ")
+        # Первый запуск — старого файла нет, просто сохраняем
+        if not old_excel_path.exists():
+            logger.info("Первый запуск: старый файл не найден, сохраняем текущее расписание как базу.")
+            _save_data(groups_info, {})
+            return True
+
+        # Извлечение старых данных для сравнения
+        groups_info_old = await data_extractor.extract(old_excel_path)
+        groups_info_old = parser.parse(groups_info_old)
+
         # Сохранение данных
         _save_data(groups_info, groups_info_old)
-        
+
         # Сравнение изменений
         changes = manager.compare(groups_info_old, groups_info)
-        
+
         # Отправка уведомлений
         if changes:
             await _send_notifications(changes)
-        
+
         logger.info("Обработка расписания завершена успешно")
         return True
-        
+
     except Exception as e:
         logger.error(f"Ошибка при обработке расписания: {e}")
         return False
+
 
 async def _handle_files(excel_path, old_excel_path):
     """Обработка файлов"""
@@ -66,11 +71,12 @@ async def _handle_files(excel_path, old_excel_path):
             if not (excel_path.exists() and excel_path.is_file()):
                 await data_extractor.download_file(excel_path)
         else:
-            if excel_path.exists(): data_extractor.delete_old_file(excel_path, max_time=0)
+            if excel_path.exists():
+                data_extractor.delete_old_file(excel_path, max_time=0)
             if not (excel_path.exists() and excel_path.is_file()):
                 await data_extractor.download_file(excel_path)
         return True
-                
+
     except PermissionError:
         logger.error("Не удалось удалить старый и скачать новый файлы - нет прав, пропускаем.")
         if not (excel_path.exists() and excel_path.is_file()):
@@ -83,76 +89,93 @@ async def _handle_files(excel_path, old_excel_path):
         logger.error(f"Ошибка при работе с файлами: {e}")
         return False
 
+
 def _save_data(groups_info, groups_info_old):
     """Сохранение данных в JSON"""
     try:
-        with open("data\\groups_info.json", "w", encoding="utf-8") as f:
-            json.dump(groups_info, f, ensure_ascii=False, indent=4)
-        with open("data\\groups_info_old.json", "w", encoding="utf-8") as f:
-            json.dump(groups_info_old, f, ensure_ascii=False, indent=4)
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+        def serialize(obj):
+            """Сериализация date объектов"""
+            from datetime import date
+            if isinstance(obj, date):
+                return obj.isoformat()
+            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+        with open(DATA_DIR / "groups_info.json", "w", encoding="utf-8") as f:
+            json.dump(groups_info, f, ensure_ascii=False, indent=4, default=serialize)
+        with open(DATA_DIR / "groups_info_old.json", "w", encoding="utf-8") as f:
+            json.dump(groups_info_old, f, ensure_ascii=False, indent=4, default=serialize)
     except Exception as e:
         logger.error(f"Ошибка при сохранении данных: {e}")
+
+
+def get_cached_schedule():
+    """Загружает кэшированное расписание из JSON"""
+    try:
+        path = DATA_DIR / "groups_info.json"
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке кэша: {e}")
+    return None
+
 
 async def _send_notifications(changes):
     """Отправка уведомлений"""
     try:
-        all_changes = {"general":[], "groups":[], "teachers":[]}
+        all_changes = {"general": [], "groups": [], "teachers": []}
         messages = defaultdict(list)
-        
+
         for changes_type, changes_list in changes.items():
             if changes_type == "general":
                 all_changes["general"].extend(changes_list)
             elif changes_type == "groups":
-                for group_name, changes in changes_list.items():
-                    group_changes = [f"[{group_name}]"]
-                    group_changes.extend(changes)
-                    group_changes.append("")
-                    messages[group_name].extend(changes)
-                    all_changes["groups"].extend(group_changes)
+                for group_name, group_changes in changes_list.items():
+                    formatted = [f"[{group_name}]"]
+                    formatted.extend(group_changes)
+                    formatted.append("")
+                    messages[group_name].extend(group_changes)
+                    all_changes["groups"].extend(formatted)
             else:
                 for teachers, teachers_changes in changes_list.items():
                     all_changes["teachers"].append(f"[{teachers}]")
                     group_changes = []
                     for group_name, change in teachers_changes.items():
-                        group_changes.append(f"• {group_name}")
+                        group_changes.append(f"\u2022 {group_name}")
                         group_changes.extend(change)
                     all_changes["teachers"].extend(group_changes)
                     all_changes["teachers"].append("")
-                    
+
                     individual_teachers = [t.strip() for t in teachers.replace("\n", ",").split(",") if t.strip()]
                     for individual_teacher in individual_teachers:
                         messages[individual_teacher].extend(group_changes)
                         messages[individual_teacher].append("")
-        
+
         # Отправка персональных уведомлений
-        for title, changes in messages.items():
-            message = f"[{title}]\n" + "\n".join(changes)
+        for title, change_list in messages.items():
+            message = f"[{title}]\n" + "\n".join(change_list)
             message = message.rstrip("\n")
-            # logger.info(message)
             await send_user_notification(title, message)
-        
+
         # Отправка общих уведомлений в канал
         if all_changes:
             final_message_parts = []
-            
+
             if all_changes["general"]:
                 final_message_parts.extend(all_changes["general"])
                 final_message_parts.append("")
-            
             if all_changes["groups"]:
                 final_message_parts.extend(all_changes["groups"])
                 final_message_parts.append("")
-            
             if all_changes["teachers"]:
                 final_message_parts.extend(all_changes["teachers"])
-            
+
             while final_message_parts and final_message_parts[-1] == "":
                 final_message_parts.pop()
-            
-            final_message = "\n".join(final_message_parts)
-            
-            # Отправляем только изменения преподавателей в канал
+
             await send_channel_post("\n".join(all_changes["teachers"]))
-            
+
     except Exception as e:
         logger.error(f"Ошибка при отправке уведомлений: {e}")
