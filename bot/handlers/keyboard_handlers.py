@@ -14,7 +14,7 @@ from ..middleware.utils import (
     remove_subscription, remove_all_subscriptions
 )
 from parser.process import get_cached_schedule
-from parser.date_parser import get_active_subject, get_active_room
+from parser.date_parser import get_active_lesson, get_lesson_end_time
 from config import BotConfig
 
 logger = logging.getLogger(__name__)
@@ -178,6 +178,19 @@ def get_all_teachers():
     return sorted(teachers)
 
 
+def _clean_time(time_val):
+    """Убирает день недели из строки времени"""
+    clean = time_val
+    for day in list(DAY_MAP.values()) + list(DAY_SHORT.values()):
+        clean = clean.replace(day, "").strip()
+    return clean
+
+
+def _get_val(item):
+    """Извлекает value из dict или возвращает строку"""
+    return item["value"] if isinstance(item, dict) else item
+
+
 def format_today_schedule(group_name):
     """Формирует расписание на сегодня для группы"""
     schedule = get_cached_schedule()
@@ -190,46 +203,45 @@ def format_today_schedule(group_name):
     today_short = DAY_SHORT.get(today.weekday(), "")
 
     times = data.get("times", [])
-    # Используем active_subjects/active_rooms если есть, иначе subjects/rooms
-    subjects = data.get("active_subjects", data.get("subjects", []))
-    teachers = data.get("teachers", [])
-    rooms = data.get("active_rooms", data.get("rooms", []))
-    grey_flags = data.get("grey_flags", [False] * len(times))
+    raw_subjects = data.get("raw_subjects", data.get("subjects", []))
+    rooms = data.get("rooms", [])
+    event_flags = data.get("event_flags", [False] * len(times))
 
     lines = [f"📅 <b>Расписание на сегодня — {today_day}</b>", f"👥 Группа: <b>{group_name}</b>", ""]
 
     found = False
-    for i, (time_item, subj_item, teacher_item, room_item) in enumerate(
-        zip(times, subjects, teachers, rooms)
-    ):
-        time_val = time_item["value"] if isinstance(time_item, dict) else time_item
-        subj_val = subj_item["value"] if isinstance(subj_item, dict) else subj_item
-        teacher_val = teacher_item["value"] if isinstance(teacher_item, dict) else teacher_item
-        room_val = room_item["value"] if isinstance(room_item, dict) else room_item
+    for i, (time_item, raw_subj_item, room_item) in enumerate(zip(times, raw_subjects, rooms)):
+        time_val = _get_val(time_item)
+        raw_subj = _get_val(raw_subj_item)
+        room_val = _get_val(room_item)
 
         # Проверяем день недели
         if today_day not in time_val.upper() and today_short not in time_val.upper():
             continue
 
-        # Пропускаем серые (неактивные)
-        if i < len(grey_flags) and grey_flags[i]:
+        # Для событий показываем как есть
+        is_event = event_flags[i] if i < len(event_flags) else False
+
+        # Получаем активный предмет с правильным преподавателем
+        lesson = get_active_lesson(raw_subj, room_val, today)
+
+        if not lesson["subject"] and not is_event:
             continue
 
-        # Убираем день недели из времени
-        clean_time = time_val
-        for day in list(DAY_MAP.values()) + list(DAY_SHORT.values()):
-            clean_time = clean_time.replace(day, "").strip()
-
-        if not subj_val:
-            continue
+        clean_time = _clean_time(time_val)
+        end_time = get_lesson_end_time(time_val)
+        time_display = f"{clean_time} - {end_time}" if end_time else clean_time
 
         found = True
-        lines.append(f"🕐 <b>{clean_time}</b>")
-        lines.append(f"   📖 {subj_val}")
-        if teacher_val:
-            lines.append(f"   👨‍🏫 {teacher_val}")
-        if room_val:
-            lines.append(f"   🚪 {room_val}")
+        lines.append(f"🕐 <b>{time_display}</b>")
+        if is_event:
+            lines.append(f"   📢 {lesson['subject'] or raw_subj}")
+        else:
+            lines.append(f"   📖 {lesson['subject']}")
+        if lesson["teacher"]:
+            lines.append(f"   👨‍🏫 {lesson['teacher']}")
+        if lesson["room"]:
+            lines.append(f"   🚪 {lesson['room']}")
         lines.append("")
 
     if not found:
@@ -253,41 +265,35 @@ def format_teacher_schedule(teacher_name):
     found = False
     for group_name, data in schedule.items():
         times = data.get("times", [])
-        subjects = data.get("active_subjects", data.get("subjects", []))
-        teachers = data.get("teachers", [])
-        rooms = data.get("active_rooms", data.get("rooms", []))
-        grey_flags = data.get("grey_flags", [False] * len(times))
+        raw_subjects = data.get("raw_subjects", data.get("subjects", []))
+        rooms = data.get("rooms", [])
 
-        for i, (time_item, subj_item, teacher_item, room_item) in enumerate(
-            zip(times, subjects, teachers, rooms)
-        ):
-            time_val = time_item["value"] if isinstance(time_item, dict) else time_item
-            subj_val = subj_item["value"] if isinstance(subj_item, dict) else subj_item
-            teacher_val = teacher_item["value"] if isinstance(teacher_item, dict) else teacher_item
-            room_val = room_item["value"] if isinstance(room_item, dict) else room_item
+        for i, (time_item, raw_subj_item, room_item) in enumerate(zip(times, raw_subjects, rooms)):
+            time_val = _get_val(time_item)
+            raw_subj = _get_val(raw_subj_item)
+            room_val = _get_val(room_item)
 
             # Проверяем день
             if today_day not in time_val.upper() and today_short not in time_val.upper():
                 continue
 
-            # Проверяем преподавателя
-            if teacher_name.lower() not in teacher_val.lower():
+            # Получаем активный урок
+            lesson = get_active_lesson(raw_subj, room_val, today)
+
+            # Проверяем что этот преподаватель ведёт этот урок
+            if not lesson["teacher"] or teacher_name.lower() not in lesson["teacher"].lower():
                 continue
 
-            # Пропускаем серые
-            if i < len(grey_flags) and grey_flags[i]:
-                continue
-
-            clean_time = time_val
-            for day in list(DAY_MAP.values()) + list(DAY_SHORT.values()):
-                clean_time = clean_time.replace(day, "").strip()
+            clean_time = _clean_time(time_val)
+            end_time = get_lesson_end_time(time_val)
+            time_display = f"{clean_time} - {end_time}" if end_time else clean_time
 
             found = True
-            lines.append(f"🕐 <b>{clean_time}</b>")
-            lines.append(f"   📖 {subj_val}")
+            lines.append(f"🕐 <b>{time_display}</b>")
+            lines.append(f"   📖 {lesson['subject']}")
             lines.append(f"   👥 Группа: {group_name}")
-            if room_val:
-                lines.append(f"   🚪 {room_val}")
+            if lesson["room"]:
+                lines.append(f"   🚪 {lesson['room']}")
             lines.append("")
 
     if not found:
@@ -298,18 +304,43 @@ def format_teacher_schedule(teacher_name):
 
 # ── Хэндлеры ──
 
+def _build_admin_kb():
+    from aiogram.utils.keyboard import ReplyKeyboardMarkup, KeyboardButton
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Запустить парсер"), KeyboardButton(text="Тест уведомлений")],
+            [KeyboardButton(text="Меню")]
+        ],
+        resize_keyboard=True, one_time_keyboard=False
+    )
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message):
+    if message.from_user.id not in BotConfig.ADMINS:
+        return
+    await message.answer("Панель администратора:", reply_markup=_build_admin_kb())
+
+
+@router.message(F.text == "Меню")
+async def btn_menu(message: Message, state: FSMContext):
+    """Кнопка Меню — показывает главное меню с подписками"""
+    await state.clear()
+    subs = get_user_subscriptions(message.from_user.id)
+    welcome = "Главное меню:"
+    if subs:
+        sub_list = "\n".join(f"  {'👥' if s['type'] == 'group' else '👨‍🏫'} {s['key']}" for s in subs)
+        welcome += f"\n\n📋 <b>Подписки:</b>\n{sub_list}"
+    await message.answer(welcome, reply_markup=build_main_keyboard(subs), parse_mode='HTML')
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     subs = get_user_subscriptions(message.from_user.id)
 
     if message.from_user.id in BotConfig.ADMINS:
-        from aiogram.utils.keyboard import ReplyKeyboardMarkup, KeyboardButton
-        admin_kb = ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="Запустить парсер")]],
-            resize_keyboard=True, one_time_keyboard=True
-        )
-        await message.answer("Панель администратора:", reply_markup=admin_kb)
+        await message.answer("Панель администратора:", reply_markup=_build_admin_kb())
 
     welcome = (
         "👋 <b>Привет!</b> Я бот для уведомлений об изменениях в расписании ПСПУ.\n\n"

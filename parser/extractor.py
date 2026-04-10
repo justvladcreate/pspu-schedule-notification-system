@@ -241,6 +241,7 @@ class DataExtractor:
 
             times = []
             subjects = []
+            raw_subjects = []  # сырой текст с ФИО внутри
             teachers = []
             rooms = []
             grey_flags = []
@@ -268,6 +269,10 @@ class DataExtractor:
                 room_cell = self.get_merged_cell_value(ws, r, end_col - 1)
                 room_val = str(room_cell.value).strip() if room_cell.value else ""
 
+                # Проверяем серый шрифт у кабинета
+                actual_room_cell = ws.cell(row=r, column=end_col - 1)
+                is_room_grey = self.is_grey_font(actual_room_cell)
+
                 # Собираем текст предмета из всех колонок между time и room
                 subject_parts = []
                 is_grey = False
@@ -282,15 +287,26 @@ class DataExtractor:
                 if not subject_text:
                     continue
 
+                # Серый предмет ИЛИ серый кабинет — пропускаем
+                if is_grey or is_room_grey:
+                    continue
+
                 # Проверяем мероприятие
                 is_event = self.is_event_row(ws, r, start_col, end_col)
 
-                # Извлекаем ФИО преподавателей
+                # Сохраняем сырой текст (с ФИО) для посегментного разбора
+                raw_subject_text = subject_text
+
+                # Извлекаем ФИО преподавателей (для обратной совместимости)
                 teachers_text, subject_text = self.extract_and_remove_title_fio(subject_text)
                 if teachers_text is None:
                     teachers_text = ""
                 else:
                     teachers_text = ", ".join(teachers_text)
+
+                # Пропускаем строки без преподавателя (нет ФИО = не парсим)
+                if not teachers_text and not is_event:
+                    continue
 
                 if current_day:
                     time_val = f"{current_day} {time_val}"
@@ -302,6 +318,7 @@ class DataExtractor:
 
                 times.append({"cell": time_cell_addr, "value": time_val})
                 subjects.append({"cell": subject_cell_addr, "value": subject_text})
+                raw_subjects.append({"cell": subject_cell_addr, "value": raw_subject_text})
                 rooms.append({"cell": room_cell_addr, "value": room_val})
                 teachers.append({"cell": subject_cell_addr, "value": teachers_text})
                 grey_flags.append(is_grey)
@@ -316,6 +333,7 @@ class DataExtractor:
                     "vacation": vacation,
                     "times": times,
                     "subjects": subjects,
+                    "raw_subjects": raw_subjects,
                     "teachers": teachers,
                     "rooms": rooms,
                     "grey_flags": grey_flags,

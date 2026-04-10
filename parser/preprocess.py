@@ -135,6 +135,7 @@ class DataParser:
             groups_info[group_name]['rooms'] = new_rooms
             groups_info[group_name]['active_subjects'] = new_active_subjects
             groups_info[group_name]['active_rooms'] = new_active_rooms
+            # raw_subjects сохраняем как есть (без clean) — нужны для get_active_lesson()
 
         return groups_info
 

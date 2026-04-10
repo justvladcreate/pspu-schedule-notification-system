@@ -187,10 +187,11 @@ def _extract_dates(match):
     """Извлекает даты из regex match"""
     if match.group(1):  # диапазон DD.MM - DD.MM
         return parse_date(match.group(1), match.group(2)), parse_date(match.group(3), match.group(4))
-    elif match.group(5):  # "с DD.MM"
+    elif match.group(5):  # "с DD.MM" — от этой даты и далее
         return parse_date(match.group(5), match.group(6)), None
-    elif match.group(7):  # standalone DD.MM
-        return parse_date(match.group(7), match.group(8)), None
+    elif match.group(7):  # standalone DD.MM без "с" — конкретный день
+        d = parse_date(match.group(7), match.group(8))
+        return d, d  # from == to → один день
     return None, None
 
 
@@ -257,6 +258,87 @@ def get_active_room(room_text, check_date=None):
             return "; ".join(texts)
 
     return room_text
+
+
+def extract_fio(text):
+    """Извлекает ФИО из текста и возвращает (fio_list, cleaned_text)"""
+    pattern = r'(?:\b[А-ЯЁа-яё\-]{1,20}\.\s*)?\b([А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)*)\s+([А-ЯЁ])\.\s*([А-ЯЁ])\.?'
+    regex = re.compile(pattern)
+
+    matches = []
+    seen = set()
+    for m in regex.finditer(text):
+        fio = f"{m.group(1)} {m.group(2)}.{m.group(3)}."
+        fio = fio.replace('ё', 'е').replace('Ё', 'Е')
+        if fio not in seen:
+            seen.add(fio)
+            matches.append(fio)
+
+    cleaned = regex.sub('', text)
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned)
+    cleaned = re.sub(r'\s+([,.:;])', r'\1', cleaned)
+    # Убираем "преп.", "доц.", "проф.", "ст.преп." оставшиеся без ФИО
+    cleaned = re.sub(r'\b(?:преп|доц|проф|ст\.преп)\.?\s*', '', cleaned)
+    cleaned = cleaned.strip().rstrip(',').strip()
+
+    return matches, cleaned
+
+
+def get_active_lesson(raw_subject, room_text, check_date=None):
+    """
+    Из СЫРОГО текста (с ФИО внутри) и текста кабинета
+    возвращает активный урок: {subject, teacher, room}
+
+    Ключевая функция: разбивает по датам, извлекает ФИО
+    из каждого сегмента отдельно → правильная привязка преподаватель↔предмет.
+    """
+    if check_date is None:
+        check_date = date.today()
+
+    # Разбиваем сырой текст на сегменты
+    segments = split_by_dates(raw_subject)
+
+    # Извлекаем ФИО из каждого сегмента отдельно
+    enriched = []
+    for seg in segments:
+        fios, clean_text = extract_fio(seg["text"])
+        enriched.append({
+            "subject": clean_text,
+            "teacher": ", ".join(fios) if fios else "",
+            "date_from": seg.get("date_from"),
+            "date_to": seg.get("date_to"),
+            "date_ranges": seg.get("date_ranges", []),
+        })
+
+    # Находим активные сегменты
+    active = [e for e in enriched if is_segment_active(e, check_date)]
+
+    if not active:
+        # Фолбэк — вернуть всё
+        fios, clean = extract_fio(raw_subject)
+        return {
+            "subject": clean,
+            "teacher": ", ".join(fios),
+            "room": room_text or "",
+        }
+
+    # Берём активный предмет (обычно один, но может быть несколько)
+    subjects = [a["subject"] for a in active if a["subject"]]
+    teachers = []
+    for a in active:
+        if a["teacher"]:
+            for t in a["teacher"].split(", "):
+                if t not in teachers:
+                    teachers.append(t)
+
+    # Кабинет — тоже по дате
+    active_room = get_active_room(room_text, check_date)
+
+    return {
+        "subject": "; ".join(subjects) if subjects else "",
+        "teacher": ", ".join(teachers) if teachers else "",
+        "room": active_room or "",
+    }
 
 
 def get_all_segments(subject_text, room_text):
