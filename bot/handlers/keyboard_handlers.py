@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from ..middleware.database import SessionLocal, Subscription, MAX_SUBSCRIPTIONS
 from ..middleware.utils import (
@@ -27,6 +27,9 @@ DAY_MAP = {
 DAY_SHORT = {
     0: "ПН", 1: "ВТ", 2: "СР", 3: "ЧТ", 4: "ПТ", 5: "СБ", 6: "ВС"
 }
+DAY_LABELS = {
+    0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб"
+}
 
 
 class SubscribeStates(StatesGroup):
@@ -40,9 +43,26 @@ def build_main_keyboard(subs):
     buttons = []
     if subs:
         buttons.append([InlineKeyboardButton(text="📋 Мои подписки", callback_data="my_subs")])
-        buttons.append([InlineKeyboardButton(text="📅 Расписание на сегодня", callback_data="today_schedule")])
+        buttons.append([InlineKeyboardButton(text="📅 Расписание", callback_data="schedule_pick_day")])
     if len(subs) < MAX_SUBSCRIPTIONS:
         buttons.append([InlineKeyboardButton(text="➕ Подписаться", callback_data="subscribe")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_day_picker_keyboard():
+    """Клавиатура выбора дня недели"""
+    today_wd = date.today().weekday()
+    buttons = [
+        [InlineKeyboardButton(
+            text=f"{'▸ ' if wd == today_wd else ''}{DAY_LABELS[wd]}{'(сегодня)' if wd == today_wd else ''}",
+            callback_data=f"sched_day_{wd}"
+        ) for wd in range(3)],  # Пн Вт Ср
+        [InlineKeyboardButton(
+            text=f"{'▸ ' if wd == today_wd else ''}{DAY_LABELS[wd]}{'(сегодня)' if wd == today_wd else ''}",
+            callback_data=f"sched_day_{wd}"
+        ) for wd in range(3, 6)],  # Чт Пт Сб
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")]
+    ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -191,25 +211,28 @@ def _get_val(item):
     return item["value"] if isinstance(item, dict) else item
 
 
-def format_today_schedule(group_name):
-    """Формирует расписание на сегодня для группы"""
+def format_today_schedule(group_name, target_date=None):
+    """Формирует расписание для группы на указанный день"""
     schedule = get_cached_schedule()
     if not schedule or group_name not in schedule:
         return f"Расписание для группы {group_name} не найдено."
 
     data = schedule[group_name]
-    today = date.today()
-    today_day = DAY_MAP.get(today.weekday(), "")
-    today_short = DAY_SHORT.get(today.weekday(), "")
+    if target_date is None:
+        target_date = date.today()
+    today_day = DAY_MAP.get(target_date.weekday(), "")
+    today_short = DAY_SHORT.get(target_date.weekday(), "")
 
     times = data.get("times", [])
     raw_subjects = data.get("raw_subjects", data.get("subjects", []))
     rooms = data.get("rooms", [])
     event_flags = data.get("event_flags", [False] * len(times))
 
-    lines = [f"📅 <b>Расписание на сегодня — {today_day}</b>", f"👥 Группа: <b>{group_name}</b>", ""]
+    date_str = target_date.strftime("%d.%m")
+    lines = [f"📅 <b>{today_day} ({date_str})</b>", f"👥 Группа: <b>{group_name}</b>", ""]
 
     found = False
+    seen_lessons = set()  # дедупликация
     for i, (time_item, raw_subj_item, room_item) in enumerate(zip(times, raw_subjects, rooms)):
         time_val = _get_val(time_item)
         raw_subj = _get_val(raw_subj_item)
@@ -223,12 +246,18 @@ def format_today_schedule(group_name):
         is_event = event_flags[i] if i < len(event_flags) else False
 
         # Получаем активный предмет с правильным преподавателем
-        lesson = get_active_lesson(raw_subj, room_val, today)
+        lesson = get_active_lesson(raw_subj, room_val, target_date)
 
         if not lesson["subject"] and not is_event:
             continue
 
+        # Дедупликация: пропускаем если такой урок уже показан
         clean_time = _clean_time(time_val)
+        lesson_key = (clean_time, lesson["subject"], lesson["teacher"])
+        if lesson_key in seen_lessons:
+            continue
+        seen_lessons.add(lesson_key)
+
         end_time = get_lesson_end_time(time_val)
         time_display = f"{clean_time} - {end_time}" if end_time else clean_time
 
@@ -250,19 +279,22 @@ def format_today_schedule(group_name):
     return "\n".join(lines)
 
 
-def format_teacher_schedule(teacher_name):
-    """Формирует расписание преподавателя на сегодня"""
+def format_teacher_schedule(teacher_name, target_date=None):
+    """Формирует расписание преподавателя на указанный день"""
     schedule = get_cached_schedule()
     if not schedule:
         return "Расписание не загружено."
 
-    today = date.today()
-    today_day = DAY_MAP.get(today.weekday(), "")
-    today_short = DAY_SHORT.get(today.weekday(), "")
+    if target_date is None:
+        target_date = date.today()
+    today_day = DAY_MAP.get(target_date.weekday(), "")
+    today_short = DAY_SHORT.get(target_date.weekday(), "")
 
-    lines = [f"📅 <b>Расписание на сегодня — {today_day}</b>", f"👨‍🏫 Преподаватель: <b>{teacher_name}</b>", ""]
+    date_str = target_date.strftime("%d.%m")
+    lines = [f"📅 <b>{today_day} ({date_str})</b>", f"👨‍🏫 Преподаватель: <b>{teacher_name}</b>", ""]
 
     found = False
+    seen_lessons = set()  # дедупликация
     for group_name, data in schedule.items():
         times = data.get("times", [])
         raw_subjects = data.get("raw_subjects", data.get("subjects", []))
@@ -278,13 +310,19 @@ def format_teacher_schedule(teacher_name):
                 continue
 
             # Получаем активный урок
-            lesson = get_active_lesson(raw_subj, room_val, today)
+            lesson = get_active_lesson(raw_subj, room_val, target_date)
 
             # Проверяем что этот преподаватель ведёт этот урок
             if not lesson["teacher"] or teacher_name.lower() not in lesson["teacher"].lower():
                 continue
 
+            # Дедупликация
             clean_time = _clean_time(time_val)
+            lesson_key = (clean_time, lesson["subject"], group_name)
+            if lesson_key in seen_lessons:
+                continue
+            seen_lessons.add(lesson_key)
+
             end_time = get_lesson_end_time(time_val)
             time_display = f"{clean_time} - {end_time}" if end_time else clean_time
 
@@ -355,18 +393,13 @@ async def cmd_start(message: Message, state: FSMContext):
 
 @router.message(Command("schedule"))
 async def cmd_schedule(message: Message):
-    """Быстрая команда — расписание на сегодня"""
+    """Быстрая команда — выбор дня для расписания"""
     subs = get_user_subscriptions(message.from_user.id)
     if not subs:
         await message.answer("У тебя нет подписок. Используй /start чтобы подписаться.")
         return
 
-    for s in subs:
-        if s["type"] == "group":
-            text = format_today_schedule(s["key"])
-        else:
-            text = format_teacher_schedule(s["key"])
-        await message.answer(text, parse_mode='HTML')
+    await message.answer("📅 Выберите день недели:", reply_markup=build_day_picker_keyboard())
 
 
 # ── Callback handlers ──
@@ -608,10 +641,35 @@ async def unsubscribe(callback: CallbackQuery):
             pass
 
 
-# ── Расписание на сегодня ──
+# ── Расписание — выбор дня ──
 
-@router.callback_query(F.data == "today_schedule")
-async def show_today_schedule(callback: CallbackQuery):
+@router.callback_query(F.data == "schedule_pick_day")
+async def pick_schedule_day(callback: CallbackQuery):
+    subs = get_user_subscriptions(callback.from_user.id)
+    if not subs:
+        await callback.answer("Нет подписок.", show_alert=True)
+        return
+    try:
+        await callback.message.edit_text(
+            "📅 Выберите день недели:",
+            reply_markup=build_day_picker_keyboard()
+        )
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sched_day_"))
+async def show_schedule_for_day(callback: CallbackQuery):
+    weekday = int(callback.data.split("_")[-1])
+
+    # Вычисляем дату для выбранного дня на этой неделе
+    today = date.today()
+    days_diff = weekday - today.weekday()
+    if days_diff < 0:
+        days_diff += 7
+    target = today + timedelta(days=days_diff)
+
     subs = get_user_subscriptions(callback.from_user.id)
     if not subs:
         await callback.answer("Нет подписок.", show_alert=True)
@@ -621,9 +679,9 @@ async def show_today_schedule(callback: CallbackQuery):
 
     for s in subs:
         if s["type"] == "group":
-            text = format_today_schedule(s["key"])
+            text = format_today_schedule(s["key"], target)
         else:
-            text = format_teacher_schedule(s["key"])
+            text = format_teacher_schedule(s["key"], target)
         await callback.message.answer(text, parse_mode='HTML')
 
 

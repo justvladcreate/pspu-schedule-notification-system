@@ -96,10 +96,36 @@ def split_by_dates(text):
     Разбивает текст ячейки на сегменты по датам.
 
     Возвращает список:
-    [{"date_from": date|None, "date_to": date|None, "text": "..."}, ...]
+    [{"date_from": date|None, "date_to": date|None, "text": "...", "date_ranges": [...]}, ...]
     """
     if not text or not text.strip():
         return [{"date_from": None, "date_to": None, "text": text or ""}]
+
+    # Сначала проверяем: список конкретных дат через запятую + предмет
+    # "7.02, 21.02, 7.03, 21.03, 4.04, 18.04 Компьютерная и информационная безопасность"
+    date_list_pattern = re.compile(
+        r'^(\d{1,2}\.\d{2}(?:\s*,\s*\d{1,2}\.\d{2})+)\s+([А-ЯЁA-Za-zа-яё].+)$',
+        re.DOTALL
+    )
+    date_list_match = date_list_pattern.match(text.strip())
+    if date_list_match:
+        dates_str = date_list_match.group(1)
+        subject_text = date_list_match.group(2).strip()
+        # Парсим все даты
+        individual_dates = re.findall(r'(\d{1,2})\.(\d{2})', dates_str)
+        date_ranges = []
+        for d, m in individual_dates:
+            parsed = parse_date(d, m)
+            if parsed:
+                date_ranges.append((parsed, parsed))  # конкретный день
+        if date_ranges:
+            all_dates = [d[0] for d in date_ranges]
+            return [{
+                "date_from": min(all_dates),
+                "date_to": max(all_dates),
+                "date_ranges": date_ranges,
+                "text": subject_text,
+            }]
 
     # Универсальный паттерн для всех форматов дат
     # Группа 1-4: диапазон DD.MM - DD.MM (с опциональным "с/c")
@@ -314,7 +340,15 @@ def get_active_lesson(raw_subject, room_text, check_date=None):
     active = [e for e in enriched if is_segment_active(e, check_date)]
 
     if not active:
-        # Фолбэк — вернуть всё
+        # Все сегменты имеют даты, но ни один не активен → пары нет
+        has_any_dates = any(
+            e.get("date_from") or e.get("date_ranges")
+            for e in enriched
+        )
+        if has_any_dates:
+            return {"subject": "", "teacher": "", "room": ""}
+
+        # Нет дат вообще — вернуть всё (постоянный предмет)
         fios, clean = extract_fio(raw_subject)
         return {
             "subject": clean,

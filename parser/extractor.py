@@ -251,6 +251,9 @@ class DataExtractor:
             day_col = 1
             current_day = ""
 
+            # Отслеживаем обработанные merged ranges чтобы не дублировать
+            processed_merged = set()
+
             for r in range(start_row + 1, end_r):
                 # Получаем день недели
                 day_cell = self.get_merged_cell_value(ws, r, day_col)
@@ -283,6 +286,18 @@ class DataExtractor:
                         if self.is_grey_font(sc):
                             is_grey = True
 
+                # Проверяем, не обработали ли мы эту merged ячейку ранее
+                # (если time и subject из merged cells, они дадут одинаковые данные на нескольких строках)
+                for merged_range in ws.merged_cells.ranges:
+                    if (merged_range.min_row <= r <= merged_range.max_row and
+                        merged_range.min_col <= start_col + 1 <= merged_range.max_col and
+                        merged_range.max_row > merged_range.min_row):
+                        merge_key = (merged_range.min_row, merged_range.min_col, merged_range.max_row, merged_range.max_col)
+                        if merge_key in processed_merged:
+                            subject_parts = []  # пропустим эту строку
+                            break
+                        processed_merged.add(merge_key)
+
                 subject_text = " ".join(subject_parts).strip()
                 if not subject_text:
                     continue
@@ -310,6 +325,12 @@ class DataExtractor:
 
                 if current_day:
                     time_val = f"{current_day} {time_val}"
+
+                # Дедупликация: пропускаем если такая запись уже есть
+                dedup_key = (time_val, raw_subject_text, room_val)
+                if dedup_key in processed_merged:
+                    continue
+                processed_merged.add(dedup_key)
 
                 # Адреса ячеек
                 time_cell_addr = f"{get_column_letter(start_col)}{r}"

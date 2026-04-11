@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 logger.info("Новый запуск основного скрипта.")
 print("Используйте Ctrl+C чтобы остановить скрипт...")
 
-CHECK_CHANGES_TIMER: int = 900
+CHECK_CHANGES_TIMER: int = 60  # секунды (60 = 1 минута, 900 = 15 минут)
 
 async def timer():
     timer_running = True

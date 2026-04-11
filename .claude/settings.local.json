@@ -3,7 +3,8 @@
     "allow": [
       "WebFetch(domain:docs.google.com)",
       "mcp__c1fc4002-5f49-5f9d-a4e5-93c4ef5d6a75__google_drive_fetch",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(python -c \"import parser.extractor; import bot.handlers.keyboard_handlers; print\\('OK'\\)\")"
     ]
   }
 }
