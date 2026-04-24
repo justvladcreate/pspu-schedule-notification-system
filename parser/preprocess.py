@@ -1,165 +1,217 @@
 # [file name]: preprocess.py
 import re
-from typing import Union
-class DataParser:
-    def __init__(self):
-        self.clean_replacements = {
-            "\\": "", "\"": "", "“": "", "”": "", "«": "", "»": "",
-            "—": "-", "–": "-", "−": "-", "‐": "-", "‑": "-",
-            "`": "'", "´": "'",
-            "„": "", "‚": "",
-            "…": "...", "•": "*", "⋅": "*", "◦": "*"
-        }
-        
-        self.multiple_spaces_re = re.compile(r"\s+")
-        self.multiple_dots_re = re.compile(r"\.{2,}")
-        self.multiple_dashes_re = re.compile(r"-{2,}")
-        self.multiple_commas_re = re.compile(r",{2,}")
-        self.clean_punctuation_re = re.compile(r"([!?])\1+")
-        
-    def clean(self, text: Union[str, None]) -> str:
-        if text is None:
-            return ""
-            
-        if not isinstance(text, str):
-            text = str(text)
-            
-        text = self._replace_chars(text)
-        text = self._clean_with_regex(text)
-        text = self._normalize_spaces(text)
-        
-        return text.strip()
-    
-    def _replace_chars(self, text: str) -> str:
-        if not hasattr(self, '_translation_table'):
-            self._translation_table = str.maketrans(self.clean_replacements)
-        return text.translate(self._translation_table)
-    
-    def _clean_with_regex(self, text: str) -> str:
-        text = text.replace("*", "•")
-        text = self.multiple_spaces_re.sub(" ", text)
-        text = self.multiple_dots_re.sub(".", text)
-        text = self.multiple_dashes_re.sub("-", text)
-        text = self.multiple_commas_re.sub(",", text)
-        text = self.clean_punctuation_re.sub(r"\1", text)
-        text = text.strip()
-        
+from typing import Union, List, Dict, Any, Tuple
+
+# ---------- Константы для очистки ----------
+CLEAN_REPLACEMENTS = {
+    "\\": "", "\"": "", "“": "", "”": "", "«": "", "»": "",
+    "—": "-", "–": "-", "−": "-", "‐": "-", "‑": "-",
+    "`": "'", "´": "'",
+    "„": "", "‚": "",
+    "…": "...", "•": "*", "⋅": "*", "◦": "*"
+}
+
+# Предварительная компиляция регулярных выражений для производительности
+_MULTIPLE_SPACES_RE = re.compile(r"\s+")
+_MULTIPLE_DOTS_RE = re.compile(r"\.{2,}")
+_MULTIPLE_DASHES_RE = re.compile(r"-{2,}")
+_MULTIPLE_COMMAS_RE = re.compile(r",{2,}")
+_CLEAN_PUNCTUATION_RE = re.compile(r"([!?])\1+")
+
+# ---------- Основные функции очистки ----------
+def clean(text: Union[str, None]) -> str:
+    """Основная функция очистки строки от мусорных символов и лишних пробелов"""
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+
+    text = _replace_chars(text)
+    text = _clean_with_regex(text)
+    text = _normalize_spaces(text)
+    return text.strip()
+
+def _replace_chars(text: str) -> str:
+    """Замена символов по словарю CLEAN_REPLACEMENTS"""
+    trans_table = str.maketrans(CLEAN_REPLACEMENTS)
+    return text.translate(trans_table)
+
+def _clean_with_regex(text: str) -> str:
+    """Применение регулярных выражений для схлопывания повторов"""
+    text = text.replace("*", "•")
+    text = _MULTIPLE_SPACES_RE.sub(" ", text)
+    text = _MULTIPLE_DOTS_RE.sub(".", text)
+    text = _MULTIPLE_DASHES_RE.sub("-", text)
+    text = _MULTIPLE_COMMAS_RE.sub(",", text)
+    text = _CLEAN_PUNCTUATION_RE.sub(r"\1", text)
+    return text.strip()
+
+def _normalize_spaces(text: str) -> str:
+    """Нормализует пробелы вокруг знаков препинания"""
+    text = re.sub(r"([,!?;])(\S)", r"\1 \2", text)
+    text = re.sub(r"\s+([.,!?;:])", r"\1", text)
+    return text
+
+import re
+
+import re
+
+def remove_academic_titles(text: str) -> str:
+    if not text or not isinstance(text, str):
         return text
-        
-    def extract_all_subjects(self,text: str) -> str:
-        text = re.sub(r'\d{1,2}\.\d{1,2}', ' ', text)
-        text = re.sub(r'с?\s*\d{1,2}\.\d{1,2}\s*-\s*\d{1,2}\.\d{1,2}', ' ', text, flags=re.IGNORECASE)
-        text = re.sub(r'(\d{1,2}\.\d{1,2}\s*,\s*)+\d{1,2}\.\d{1,2}', ' ', text)
-        text = re.sub(r'\([^)]*\)', ' ', text)
-        text = re.sub(r'п\\?г\s*\d', ' ', text)
-        text = re.sub(r'ст\.', ' ', text)
-        text = re.sub(r'(лек|лаб|прак)\.?', ' ', text, flags=re.IGNORECASE)
 
-        parts = re.split(r'[,;\n]|с\s', text)
-        cleaned = []
-        for p in parts:
-            p = p.strip()
-            p = re.sub(r'\s+', ' ', p)
-            if len(p) < 4:
+    titles = [
+        # Составные (длинные) – должны обрабатываться первыми
+        r'кандидат\s+(?:физ\.-мат\.|техн\.|экон\.|пед\.|филол\.|ист\.|биол\.|геогр\.|мед\.|воен\.)?\s*наук',
+        r'доктор\s+(?:физ\.-мат\.|техн\.|экон\.|пед\.|филол\.|ист\.|биол\.|геогр\.|мед\.|воен\.)?\s*наук',
+        r'старший\s+преподаватель',
+        r'старший\s+научный\s+сотрудник',
+        r'ст\.\s*науч\.?\s*сотр\.?',
+        r'ст\.?\s*преподаватель',
+        r'ст\.?\s*преп\.*',         # ст.преп, ст. преп, ст.преп. и т.п.
+        r'профессор',
+        r'ассистент',
+        r'ассист\.*',               # ассист., ассист
+        r'преподаватель',
+        r'руководитель',
+        r'ответственный',
+        r'кандидат',
+        r'доктор',
+        r'учитель',
+        r'доцент',
+        r'чл\.-корр\.+',
+
+        # Учёные степени с приставкой «наук»
+        r'канд\.\s*(?:физ\.-мат\.|техн\.|экон\.|пед\.|филол\.|ист\.|биол\.|геогр\.|мед\.|воен\.)?\s*наук',
+        r'д-р\.?\s*(?:физ\.-мат\.|техн\.|экон\.|пед\.|филол\.|ист\.|биол\.|геогр\.|мед\.|воен\.)?\s*наук',
+        r'д\.\s*р\.?\s*(?:физ\.-мат\.|техн\.|экон\.|пед\.|филол\.|ист\.|биол\.|геогр\.|мед\.|воен\.)?\s*наук',
+        r'[кд]\.[а-яё]+\.-?\s*[а-яё]+\.\s*н\.?',
+        r'[кд]\.[а-яё]+\.\s*н\.?',
+
+        # Одиночные сокращения
+        r'проф\.+', r'доц\.+', r'преп\.+', r'асс\.+',
+        r'отв\.+', r'рук\.+', r'каф\.+', r'акад\.+',
+        r'канд\.+',                # канд.
+        r'д-р\.*',                 # д-р, д-р.
+        r'д\.\s*р\.+',             # д.р., д. р.
+        r'д\.\s*р\.*',             # д.р, д р
+        r'д-р\.?',                 # д-р, д-р.
+
+        # Популярные к.т.н., д.ф.-м.н. и т.д.
+        r'к\.\s*ф\.-?\s*м\.\s*н\.?',
+        r'к\.\s*э\.\s*н\.?',
+        r'д\.\s*т\.\s*н\.?',
+        r'д\.\s*ф\.-?\s*м\.\s*н\.?',
+        r'к\.\s*п\.\s*н\.?',
+        r'д\.\s*п\.\s*н\.?',
+        r'к\.\s*т\.\s*н\.?',
+        r'к\.\s*ф\.\s*н\.?',
+        r'к\.\s*б\.\s*н\.?',
+        r'к\.\s*г\.\s*н\.?',
+        r'к\.\s*и\.\s*н\.?',
+        r'д\.\s*э\.\s*н\.?',
+        r'д\.\s*ф\.\s*н\.?',
+        r'д\.\s*б\.\s*н\.?',
+        r'д\.\s*г\.\s*н\.?',
+        r'д\.\s*и\.\s*н\.?',
+    ]
+
+    # Сортируем по убыванию длины паттерна, чтобы составные срабатывали раньше
+    titles_sorted = sorted(titles, key=lambda x: len(x), reverse=True)
+
+    for title in titles_sorted:
+        # Удаляем, если после титула (с возможной запятой/пробелами) идёт заглавная буква или конец строки
+        pattern = r'\b' + title + r'(?=\s*,?\s*[А-ЯA-Z]|\s*$)'
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+
+    # Убираем запятые и пробелы в начале строки, схлопываем двойные пробелы
+    text = re.sub(r'^[,\s]+', '', text)
+    text = re.sub(r'\s{2,}', ' ', text).strip()
+    return text
+
+def normalize_room_number(room: str) -> str:
+    """Убирает дефис между буквой и цифрами: А-231 -> А231."""
+    room = re.sub(r'(?<=[А-Я])-(?=\d)', '', room, flags=re.IGNORECASE)
+    return room.strip()
+
+
+def normalize_rooms(line: str) -> List[str]:
+    distant_pat = re.compile(r'дистанционно\s*[\\/]\s*СФЕРУМ', re.IGNORECASE)
+    corpus_pat = re.compile(r'\b([IVX]+)\s+к\.\s*[\\/]?\s*', re.IGNORECASE)
+
+    full_text = line
+    result = []
+    seen = set()
+
+    # 1. "дистанционно СФЕРУМ"
+    for m in distant_pat.finditer(full_text):
+        val = "дистанционно СФЕРУМ"
+        if val not in seen:
+            seen.add(val)
+            result.append(val)
+
+    clean_text = distant_pat.sub(' ', full_text)
+    clean_text = re.sub(r'\([^)]*\)', ' ', clean_text)
+    clean_text = re.sub(r'\b\d{1,2}\.\d{2}(?:-\d{1,2}\.\d{2})?\b', ' ', clean_text)
+
+    # 2. Обработка корпусов
+    corpus_matches = list(corpus_pat.finditer(clean_text))
+    for i, match in enumerate(corpus_matches):
+        corpus_roman = match.group(1)
+        corpus_norm = f"{corpus_roman} к."
+        start = match.end()
+        end = corpus_matches[i+1].start() if i+1 < len(corpus_matches) else len(clean_text)
+        tail = clean_text[start:end]
+
+        # Извлекаем все потенциальные токены аудиторий
+        tokens = re.findall(r'[А-Яа-я\d-]+(?:\.\s*[А-Яа-я]+)?', tail, re.IGNORECASE)
+
+        for token in tokens:
+            token = token.strip()
+            if not token:
                 continue
-            cleaned.append(p)
 
-        unique = []
-        for c in cleaned:
-            if c not in unique:
-                unique.append(c)
+            # Особый случай: акт. зал
+            if re.fullmatch(r'акт\.\s*зал', token, re.IGNORECASE):
+                room = "акт. зал"
+            else:
+                # Удаляем ведущий числовой префикс с дефисом (05-А305 -> А305)
+                room_clean = re.sub(r'^\d{1,2}-(?=[А-Я])', '', token, flags=re.IGNORECASE)
+                room_clean = re.sub(r'\s+', ' ', room_clean).strip()
 
-        return "; ".join(unique)
-    
-    def _normalize_spaces(self, text: str) -> str:
-        text = re.sub(r"([,!?;])([^\s])", r"\1 \2", text)
-        text = re.sub(r"\s+([.,!?;:])", r"\1", text)
-        
-        return text
-    
-    def parse_row(self, raw_time, raw_subject, raw_teacher, raw_room, inline = True):
-        time = self.clean(raw_time).replace("-", ":")
-        subject = self.clean(raw_subject)
-        teacher = self.clean(raw_teacher)
-        room = self.clean(raw_room)
+                # Валидация: число из ≥2 цифр или буква+цифры
+                if re.fullmatch(r'\d{2,}', room_clean):
+                    room = room_clean
+                elif re.search(r'[А-Я]', room_clean, re.IGNORECASE) and re.search(r'\d', room_clean):
+                    room = room_clean
+                else:
+                    continue
 
-        if inline:
-            result = f"{time} | {subject} | {teacher} | {room}"
-            return result
-        else:
-            return time, subject, teacher, room
-    
-    def parse_info(self, info, inline = True):
-        parsed_rows = []
+                # Убираем дефис между буквой и цифрой (А-406 -> А406)
+                room = re.sub(r'(?<=[А-Я])-(?=\d)', '', room, flags=re.IGNORECASE)
 
-        new_times = []
-        new_subjects = []
-        new_teachers = []
-        new_rooms = []
+            full_room = f"{corpus_norm} {room}"
+            if full_room not in seen:
+                seen.add(full_room)
+                result.append(full_room)
 
-        # Обрабатываем новую структуру данных
-        times = info.get("times", [])
-        subjects = info.get("subjects", [])
-        teachers = info.get("teachers", [])
-        rooms = info.get("rooms", [])
-        
-        if inline:
-            for time_item, subject_item, teacher_item, room_item in zip(times, subjects, teachers, rooms):
-                parsed_rows.append(self.parse_row(
-                    time_item["value"], 
-                    subject_item["value"], 
-                    teacher_item["value"], 
-                    room_item["value"], 
-                    inline
-                ))
-            return parsed_rows
-        else:
-            for time_item, subject_item, teacher_item, room_item in zip(times, subjects, teachers, rooms):
-                new_time, new_subject, new_teacher, new_room = self.parse_row(
-                    time_item["value"], 
-                    subject_item["value"], 
-                    teacher_item["value"], 
-                    room_item["value"], 
-                    inline
-                )
-                new_times.append({"cell": time_item["cell"], "value": new_time})
-                new_subjects.append({"cell": subject_item["cell"], "value": new_subject})
-                new_teachers.append({"cell": teacher_item["cell"], "value": new_teacher})
-                new_rooms.append({"cell": room_item["cell"], "value": new_room})
-                
-            return new_times, new_subjects, new_teachers, new_rooms
-    
-    def parse(self, groups_info):
-        for group_name in groups_info:
-            info = groups_info[group_name]
-            if info is None:
-                continue
+    return result
 
-            parsed_subject_info = self.parse_info(info, inline=True)
-            new_times, new_subjects, new_teachers, new_rooms = self.parse_info(info, inline=False)
-            
-            if not parsed_subject_info: 
-                continue
-            
-            groups_info[group_name]['times'] = new_times
-            groups_info[group_name]['subjects'] = new_subjects
-            groups_info[group_name]['teachers'] = new_teachers
-            groups_info[group_name]['rooms'] = new_rooms
+def normalize_time(time_str: str) -> str:
+    """
+    Нормализует время из формата H-M, H:M, H.M, H M в HH:MM.
+    Пример: "9-45" -> "09:45", "12-30" -> "12:30".
+    """
+    if not isinstance(time_str, str):
+        return str(time_str)
 
-        return groups_info
-    
-    def parse_response(self, text):
-        parts = [part.strip() for part in text.split('|')]
-        
-        while len(parts) < 7:
-            parts.append('')
-        
-        time = parts[0] if len(parts) > 0 else ''
-        dates = parts[1] if len(parts) > 1 else ''
-        subject = parts[2] if len(parts) > 2 else ''
-        lesson_type = parts[3] if len(parts) > 3 else ''
-        subgroup = parts[4] if len(parts) > 4 else ''
-        teacher = parts[5] if len(parts) > 5 else ''
-        classroom = parts[6] if len(parts) > 6 else ''
-        
-        return time, dates, subject, lesson_type, subgroup, teacher, classroom
+    # Ищем два числа, разделённые нецифровым символом
+    match = re.search(r'(\d{1,2})\D+(\d{1,2})', time_str)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2))
+        # Только если час и минута в допустимых пределах
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{hour:02d}:{minute:02d}"
+    # Если не подошло — возвращаем без изменений
+    return time_str
