@@ -215,3 +215,33 @@ def normalize_time(time_str: str) -> str:
             return f"{hour:02d}:{minute:02d}"
     # Если не подошло — возвращаем без изменений
     return time_str
+
+def english_to_russian_lookalike(text: str) -> str:
+    """
+    Заменяет одиночные латинские буквы на похожие русские,
+    но не трогает целые слова (последовательности из двух и более латинских букв).
+    """
+    mapping = {
+        # Заглавные
+        'A': 'А', 'B': 'В', 'C': 'С', 'E': 'Е', 'H': 'Н',
+        'I': 'І', 'J': 'Ј', 'K': 'К', 'M': 'М', 'O': 'О',
+        'P': 'Р', 'T': 'Т', 'W': 'Ш', 'X': 'Х', 'Y': 'У',
+        # Строчные
+        'a': 'а', 'b': 'ь', 'c': 'с', 'e': 'е', 'i': 'і',
+        'j': 'ј', 'k': 'к', 'm': 'м', 'o': 'о', 'p': 'р',
+        'w': 'ш', 'x': 'х', 'y': 'у',
+    }
+
+    # Паттерн находит любую последовательность латинских букв
+    pattern = re.compile(r'[A-Za-z]+')
+
+    def replacer(match: re.Match) -> str:
+        word = match.group(0)
+        if len(word) == 1:
+            # Одиночная буква – заменяем, если есть аналог
+            return mapping.get(word, word)
+        else:
+            # Слово или аббревиатура – оставляем как есть
+            return word
+
+    return pattern.sub(replacer, text)

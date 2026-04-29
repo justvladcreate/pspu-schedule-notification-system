@@ -10,11 +10,26 @@ from pathlib import Path
 import time
 import aiofiles
 import asyncio
-from parser.preprocess import remove_academic_titles, clean, normalize_rooms, normalize_time
+from parser.preprocess import remove_academic_titles, clean, normalize_rooms, normalize_time, english_to_russian_lookalike
 
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
+
+
+def delete_old_file(latest_path, old_path, max_time=0):
+
+    if not latest_path.exists():
+        return
+
+    file_time = latest_path.stat().st_mtime
+    current_time = time.time()
+
+    if current_time - file_time > max_time:
+        if old_path.exists():
+            old_path.unlink()
+
+        latest_path.rename(old_path)
 
 
 class DataExtractor:
@@ -99,25 +114,6 @@ class DataExtractor:
 
     async def download_file(self, excel_path):
         await asyncio.to_thread(self._sync_download, excel_path)
-
-
-    def delete_old_file(self, file_path, max_time=600):
-        path = Path(file_path)
-
-        if not path.exists():
-            return
-
-        file_time = path.stat().st_mtime
-        current_time = time.time()
-
-        if current_time - file_time > max_time:
-            old_file_path = path.parent / f"old_{path.name}"
-
-            if old_file_path.exists():
-                old_file_path.unlink()
-
-            path.rename(old_file_path)
-
 
     async def extract(self, file_path):
         sheets_metadata = await self.get_sheets_metadata()
@@ -285,7 +281,8 @@ def extraction(df, sheet_id):
                 room_val = normalize_rooms(room_val)
 
                 subject_val = clean(text=subject_val)
-                subject_val = remove_academic_titles(text=subject_val)
+                # subject_val = remove_academic_titles(text=subject_val)
+                subject_val = english_to_russian_lookalike(text=subject_val)
 
                 # Добавляем день недели
                 day_of_week = ""

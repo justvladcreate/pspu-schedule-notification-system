@@ -1,4 +1,3 @@
-from parser.extractor import DataExtractor
 from google.auth.exceptions import RefreshError
 from pathlib import Path
 import logging
@@ -6,7 +5,11 @@ import json
 import asyncio
 import aiofiles.os
 from parser.ai import ask_ai, user_prompt
+from parser.extractor import DataExtractor, delete_old_file
 from parser.finalize import transform_schedule
+from parser.postprocess import compare_snapshots
+from bot.middleware.database import SessionLocal, ChangeDetails
+from bot.middleware.notifier import send_notifications
 
 # from parser.process import handle_files
 
@@ -41,11 +44,11 @@ async def handle_excel_files(latest_excel, old_excel):
     try:
         if old_excel.exists():
             if latest_excel.exists() and latest_excel.is_file():
-                data_extractor.delete_old_file(latest_excel)
+                delete_old_file(latest_excel, old_excel)
             if not (latest_excel.exists() and latest_excel.is_file()):
                 await data_extractor.download_file(latest_excel)
         else:
-            if latest_excel.exists(): data_extractor.delete_old_file(latest_excel, max_time=0)
+            if latest_excel.exists(): delete_old_file(latest_excel, old_excel, max_time=0)
             if not (latest_excel.exists() and latest_excel.is_file()):
                 await data_extractor.download_file(latest_excel)
         return True
@@ -61,25 +64,22 @@ async def handle_excel_files(latest_excel, old_excel):
         logger.error(f"Ошибка при работе с файлами: {e}")
         return False
 
-async def handle_json_files(data, latest_path, old_path):
-    """Обработка файлов"""
+async def handle_json_files(data, latest_path: Path, old_path: Path):
+    """
+    Сохраняет свежий JSON-файл по пути latest_path,
+    а предыдущую версию переносит в old_path (с заменой).
+    """
     try:
-        if old_path.exists():
-            if latest_path.exists() and latest_path.is_file():
-                await aiofiles.os.remove(latest_path)
-            if not (latest_path.exists() and latest_path.is_file()):
-                await save_data(data, latest_path)
-        else:
-            if latest_path.exists():
-                await aiofiles.os.remove(latest_path)
-            if not (latest_path.exists() and latest_path.is_file()):
-                await save_data(data, latest_path)
+        if latest_path.exists():
+            if old_path.exists():
+                await aiofiles.os.remove(old_path)
+            await aiofiles.os.rename(latest_path, old_path)
+        await save_data(data, str(latest_path))
         return True
-
     except PermissionError:
         logger.error("Не удалось удалить старый и скачать новый файлы - нет прав, пропускаем.")
         if not (latest_path.exists() and latest_path.is_file()):
-            await data_extractor.download_file(latest_path)
+            await save_data(data, str(latest_path))
         return True
     except RefreshError as e:
         logger.error(f"Клиент credentials Oauth не найден или устаревший token: {e}")
@@ -90,7 +90,7 @@ async def handle_json_files(data, latest_path, old_path):
 
 async def save_data(data, path: str):
     async with aiofiles.open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+        await f.write(json.dumps(data, ensure_ascii=False, indent=4))
 
 
 async def process_schedule():
@@ -105,19 +105,118 @@ async def process_schedule():
     groups_info = await data_extractor.extract(latest_excel_path)
     groups_info_after_ai = {}
     for group, data in groups_info.items():
-        prompt_text = user_prompt + str(data)
+        prompt_text = user_prompt + "\n" + str(data)
         group_info_after_ai = await ask_ai(prompt=prompt_text)
         groups_info_after_ai[group] = {"events": group_info_after_ai}   # создаём ключ и присваиваем значение
+        # break
 
     # Промежуточное сохранение
     await handle_json_files(groups_info, latest_groups_info_extracted_and_cleaned_path, old_groups_info_extracted_and_cleaned_path)
     await handle_json_files(groups_info_after_ai, latest_groups_info_after_ai_path, old_groups_info_after_ai_path)
 
+    #отладка
+    # with open(latest_groups_info_after_ai_path, 'r') as file:
+    #     groups_info_after_ai = json.load(file)
+
     # Сведение к рабочему виду
-    groups_info = transform_schedule(groups_info_after_ai)
+    groups_info = await transform_schedule(groups_info_after_ai)
     await handle_json_files(groups_info, latest_groups_info_parsed_path, old_groups_info_parsed_path )
-    return None
+
+    # Сравниваем с предыдущим снимком
+    changes = compare_snapshots(
+        str(latest_groups_info_parsed_path),
+        str(old_groups_info_parsed_path)
+    )
+
+    if not changes:
+        return None
+
+    # Сохраняем изменения в БД с проверкой дубликатов
+    session = SessionLocal()
+    try:
+        for change in changes:
+            if change["change_type"] == "changed":
+                for field in change["changes"]:
+                    # Проверяем, нет ли уже такой записи
+                    exists = session.query(ChangeDetails).filter_by(
+                        change_type="changed",
+                        event_id=change["event_id"],
+                        field_name=field["field"],
+                        old_value=field["old_value"],
+                        new_value=field["new_value"]
+                    ).first()
+                    if not exists:
+                        detail = ChangeDetails(
+                            change_type="changed",
+                            event_id=change["event_id"],
+                            group_name=change["group"],
+                            weekday=change["weekday"],
+                            pair_number=change["pair_number"],
+                            time=change.get("time", ""),
+                            field_name=field["field"],
+                            old_value=field["old_value"],
+                            new_value=field["new_value"]
+                        )
+                        session.add(detail)
+            else:
+                # added или removed – дубликат ищем по event_id, типу, new_value/old_value
+                if change["change_type"] == "added":
+                    new_val = json.dumps(change["data"], ensure_ascii=False)
+                    exists = session.query(ChangeDetails).filter_by(
+                        change_type="added",
+                        event_id=change["event_id"],
+                        new_value=new_val
+                    ).first()
+                    if not exists:
+                        log = ChangeDetails(
+                            change_type="added",
+                            event_id=change["event_id"],
+                            group_name=change["group"],
+                            weekday=change["weekday"],
+                            pair_number=change["pair_number"],
+                            time=change.get("time", ""),
+                            new_value=new_val
+                        )
+                        session.add(log)
+                elif change["change_type"] == "removed":
+                    old_val = json.dumps(change["data"], ensure_ascii=False)
+                    exists = session.query(ChangeDetails).filter_by(
+                        change_type="removed",
+                        event_id=change["event_id"],
+                        old_value=old_val
+                    ).first()
+                    if not exists:
+                        log = ChangeDetails(
+                            change_type="removed",
+                            event_id=change["event_id"],
+                            group_name=change["group"],
+                            weekday=change["weekday"],
+                            pair_number=change["pair_number"],
+                            time=change.get("time", ""),
+                            old_value=old_val
+                        )
+                        session.add(log)
+
+        session.commit()
+        print("\n=== Содержимое change_details после сохранения ===")
+        for row in session.query(ChangeDetails).order_by(ChangeDetails.id).all():
+            print(f"id={row.id} | type={row.change_type} | event={row.event_id} | "
+                  f"group={row.group_name} | {row.weekday} {row.time} | "
+                  f"field={row.field_name} | old={row.old_value} | new={row.new_value}")
+        print("===================================================\n")
+
+        logger.info(f"Сохранено {len(changes)} изменений в change_log (дубликаты пропущены).")
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Ошибка при сохранении изменений в БД: {e}")
+    finally:
+        session.close()
+
+    # Отправка уведомлений
+    await send_notifications(changes)
+
+    return changes
 
 
 
-asyncio.run(process_schedule())
+# asyncio.run(process_schedule())

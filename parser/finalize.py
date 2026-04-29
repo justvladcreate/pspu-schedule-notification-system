@@ -1,7 +1,7 @@
-import json
-import re
+import itertools
 from typing import Dict, List, Optional, Any
 from datetime import time
+from parser.postprocess import remove_academic_titles
 
 # Карта соответствия времени начала пары номеру пары
 PAIR_INTERVALS = [
@@ -53,20 +53,14 @@ def extract_weekday_and_time(time_str: str) -> tuple[str, str]:
     time = parts[1] if len(parts) > 1 else ""
     return weekday, time
 
-def normalize_teachers(teacher_str: str) -> List[str]:
-    """Превращает строку преподавателей в список."""
-    if not teacher_str:
-        return []
-    teachers = [t.strip() for t in teacher_str.split(",") if t.strip()]
-    return teachers
+async def normalize_teachers(teacher_str: str) -> List[str]:
+    return [remove_academic_titles(t.strip()) for t in teacher_str.split(",") if remove_academic_titles(t.strip())]
 
-def transform_schedule(raw_data: Dict[str, Any]) -> Dict[str, List[Dict]]:
-    all_events = []
+async def transform_schedule(raw_data: Dict[str, Any]) -> Dict[str, List[Dict]]:
+    temp_events = []  # события без event_id и position
 
     for group, group_data in raw_data.items():
         event_strings = group_data.get("events", [])
-        position_counter: Dict[tuple, int] = {}
-
         for event_str in event_strings:
             params = parse_event_string(event_str)
 
@@ -74,42 +68,39 @@ def transform_schedule(raw_data: Dict[str, Any]) -> Dict[str, List[Dict]]:
             if not time_raw:
                 continue
             weekday, time_val = extract_weekday_and_time(time_raw)
-            pair_number = get_pair_number(time_val)  # <-- используем новую функцию
+            pair_number = get_pair_number(time_val)
             if pair_number is None:
                 continue
 
-            dates = params.get("dates", "")
-            discipline = params.get("discipline", "")
-            type_raw = params.get("type", "")
-            subgroup_raw = params.get("subgroup", "")
-            teachers_raw = params.get("teachers", "")
-            rooms_raw = params.get("rooms", "")
-            comment = params.get("comment", "")
+            teachers = await normalize_teachers(params.get("teachers", ""))
 
-            key = (weekday, pair_number)
-            position_counter[key] = position_counter.get(key, 0) + 1
-            position = position_counter[key]
-
-            event_id = f"{group}_{weekday}_{pair_number}_{position}"
-
-            teachers = normalize_teachers(teachers_raw)
-            event = {
-                "event_id": event_id,
+            temp_events.append({
                 "group": group,
                 "weekday": weekday,
-                "time": time_val,           # исходное время, например "15:30"
-                "pair_number": pair_number, # номер пары 4
-                "position": position,
-                "discipline": discipline,
+                "time": time_val,
+                "pair_number": pair_number,
+                "discipline": params.get("discipline", ""),
+                "type": params.get("type", ""),
+                "subgroup": params.get("subgroup", ""),
                 "teachers": teachers,
-                "dates": dates,
-                "rooms": rooms_raw,
-                "type": type_raw,
-                "subgroup": subgroup_raw,
-                "comment": comment
-            }
-            all_events.append(event)
+                "dates": params.get("dates", ""),
+                "rooms": params.get("rooms", ""),
+                "comment": params.get("comment", ""),
+            })
 
-    return {"events": all_events}
+    # Группируем по group, weekday, pair_number
+    temp_events.sort(key=lambda e: (e["group"], e["weekday"], e["pair_number"]))
+    final_events = []
+    for (group, weekday, pair_number), slot_events_it in itertools.groupby(
+            temp_events, key=lambda e: (e["group"], e["weekday"], e["pair_number"])
+    ):
+        slot_events = list(slot_events_it)
+        # Сортировка внутри слота
+        slot_events.sort(key=lambda e: (e["discipline"], e["type"], e["subgroup"]))
+        for idx, ev in enumerate(slot_events, start=1):
+            ev["position"] = idx
+            ev["event_id"] = f"{group}_{weekday}_{pair_number}_{idx}"
+            final_events.append(ev)
 
+    return {"events": final_events}
 

@@ -1,20 +1,19 @@
 from config import BotConfig
 import logging
-from .handlers import basic_handlers, keyboard_handlers
+from .handlers import keyboard_handlers, text_handlers
 
 logger = logging.getLogger(__name__)
 
-bot = BotConfig().BOT
-dp = BotConfig().DP
-# CHANNEL_CHAT_ID: int = -1003206831079
-# DATABASE_URL: str = "sqlite:///users.db"
-    
-# Запуск процесса поллинга новых апдейтов
 async def run():
+    bot_config = BotConfig()
+    dp = bot_config.DP
+    bot = bot_config.BOT
 
-    dp.include_router(basic_handlers.router)
+    # Подключаем роутеры
     dp.include_router(keyboard_handlers.router)
-    # Удаляем вебхук и пропускаем накопившиеся входящие сообщения
+    dp.include_router(text_handlers.router)
+
+    # Удаляем вебхук и запускаем поллинг
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Слушаем новые события...")
     await dp.start_polling(bot)

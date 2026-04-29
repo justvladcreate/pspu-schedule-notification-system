@@ -2,8 +2,11 @@
 from .database import SessionLocal, User
 from collections import defaultdict
 from config import BotConfig
+import logging
 
-bot = BotConfig().BOT
+logger = logging.getLogger(__name__)
+
+bot = BotConfig.BOT
 
 async def send_user_notification(key: str, message_text: str) -> int:
     """
@@ -77,7 +80,7 @@ async def send_channel_post(text: str) -> None:
         disable_notification=True
     )
 
-async def _send_notifications(changes):
+async def send_notifications(changes):
     """Отправка уведомлений"""
     try:
         all_changes = {"general":[], "groups":[], "teachers":[]}
