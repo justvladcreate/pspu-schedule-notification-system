@@ -47,14 +47,21 @@ def _clean_with_regex(text: str) -> str:
     return text.strip()
 
 def _normalize_spaces(text: str) -> str:
-    """Нормализует пробелы вокруг знаков препинания"""
-    text = re.sub(r"([,!?;])(\S)", r"\1 \2", text)
-    text = re.sub(r"\s+([.,!?;:])", r"\1", text)
+    """Нормализует пробелы вокруг знаков препинания, но не трогает даты вида число.число"""
+    # Защищаем даты вида ДД.ММ или ДД.ММ.ГГГГ от разбиения
+    date_pattern = r'\d{1,2}\.\d{2}(?:\.\d{4})?'
+    text = re.sub(date_pattern, lambda m: m.group(0).replace('.', '\x00'), text)
+
+    # Добавляем пробел после знака, если его нет
+    text = re.sub(r'([,!?;])(\S)', r'\1 \2', text)
+    # Убираем лишний пробел перед знаком
+    text = re.sub(r'\s+([.,!?;:])', r'\1', text)
+    # Добавляем пробел после точки, если за ней не пробел и не цифра (чтобы не разбивать даты)
+    text = re.sub(r'\.([А-Яа-яA-Za-z])', r'. \1', text)
+
+    # Восстанавливаем даты
+    text = text.replace('\x00', '.')
     return text
-
-import re
-
-import re
 
 def remove_academic_titles(text: str) -> str:
     if not text or not isinstance(text, str):
@@ -245,3 +252,158 @@ def english_to_russian_lookalike(text: str) -> str:
             return word
 
     return pattern.sub(replacer, text)
+
+def normalize_date_ranges(text: str, default_end_date: str = None) -> str:
+    text = re.sub(r'(\d{1,2}\.\d{2}(?:\.\d{4})?)\s*[-–—]\s*(\d{1,2}\.\d{2}(?:\.\d{4})?)',
+                  r'\1 - \2', text)
+    # 1. Убираем точку в конце даты (06.02. -> 06.02)
+    text = re.sub(r'(\d{1,2}\.\d{2}(?:\.\d{4})?)\.(?=\s|$|[,–—\-]|$)', r'\1', text)
+
+    # 2. Нормализуем диапазоны "с дата1 - дата2" -> "дата1 - дата2"
+    text = re.sub(
+        r'\bс\s+(\d{1,2}\.\d{2}(?:\.\d{4})?)\s*[-–—]\s*(\d{1,2}\.\d{2}(?:\.\d{4})?)',
+        r'\1 - \2',
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # 3. Обрабатываем одиночные даты с "с" (без диапазона)
+    if default_end_date:
+        text = re.sub(
+            r'\bс\s+(\d{1,2}\.\d{2}(?:\.\d{4})?)(?!\s*[-–—]\s*\d)',
+            r'\1 - ' + default_end_date,
+            text,
+            flags=re.IGNORECASE
+        )
+    else:
+        text = re.sub(r'\bс\s+(\d{1,2}\.\d{2}(?:\.\d{4})?)', r'\1', text, flags=re.IGNORECASE)
+
+    # 4. Удаляем висячий дефис после даты (если нет второй даты)
+    text = re.sub(r'(\d{1,2}\.\d{2}(?:\.\d{4})?)\s*[-–—]\s*(?![0-9])', r'\1', text)
+
+    # 5. Принудительно вставляем дефис между двумя датами, разделёнными пробелом
+    text = re.sub(r'(\d{1,2}\.\d{2}(?:\.\d{4})?)\s+(\d{1,2}\.\d{2}(?:\.\d{4})?)', r'\1 - \2', text)
+
+    # 6. Чистим пробелы
+    text = re.sub(r'\s+', ' ', text).strip()
+    # Гарантируем пробел после даты, если за ней идёт буква
+    text = re.sub(r'(\d{1,2}\.\d{2})([А-Яа-я])', r'\1 \2', text)
+    return text
+
+def remove_invalid_dates(text: str) -> str:
+    """Удаляет невалидные даты, но не трогает точки в валидных."""
+    date_pattern_full = r'\b(\d{1,2})\.(\d{2})(?:\.(\d{4}))?\b'
+
+    def is_valid_date(day_str: str, month_str: str, year_str: str = None) -> bool:
+        try:
+            day = int(day_str)
+            month = int(month_str)
+            if month < 1 or month > 12:
+                return False
+            if day < 1 or day > 31:
+                return False
+            if month in (4, 6, 9, 11) and day > 30:
+                return False
+            if month == 2 and day > 29:
+                return False
+            if year_str:
+                year = int(year_str)
+                if month == 2 and day == 29:
+                    if not (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)):
+                        return False
+            return True
+        except ValueError:
+            return False
+
+    # 1. Обработка диапазонов дат
+    def range_repl(m):
+        date1_str = m.group(1)
+        date2_str = m.group(2)
+        parts1 = re.match(date_pattern_full, date1_str)
+        parts2 = re.match(date_pattern_full, date2_str)
+        if parts1 and parts2:
+            d1, m1, y1 = parts1.groups()
+            d2, m2, y2 = parts2.groups()
+            if is_valid_date(d1, m1, y1) and is_valid_date(d2, m2, y2):
+                return f"{date1_str} - {date2_str}"
+        return ''
+
+    text = re.sub(r'(\d{1,2}\.\d{2}(?:\.\d{4})?)\s*[-–—]\s*(\d{1,2}\.\d{2}(?:\.\d{4})?)', range_repl, text)
+
+    # 2. Одиночные даты (удаляем только невалидные)
+    def single_repl(m):
+        date_str = m.group(1)
+        parts = re.match(date_pattern_full, date_str)
+        if parts:
+            day, mon, year = parts.groups()
+            if is_valid_date(day, mon, year):
+                return date_str
+        return ''
+
+    text = re.sub(r'(?<!-)\b(\d{1,2}\.\d{2}(?:\.\d{4})?)\b(?!\s*-)', single_repl, text)
+
+    # ----- ТВОЙ БЛОК (оставляем, но можно чуть упростить) -----
+    # 3. Удаляем одиночные "с" или "c", которые остались после удаления дат
+    text = re.sub(r'\b[сc]\s+', '', text, flags=re.IGNORECASE)
+
+    # 4. Убираем лишние запятые
+    text = re.sub(r',\s*,', ',', text)           # ", ," -> ","
+    text = re.sub(r',\s*$', '', text)            # запятая в конце строки
+    text = re.sub(r'^\s*,', '', text)            # запятая в начале
+    text = re.sub(r'\s+', ' ', text)             # схлопываем пробелы
+    text = re.sub(r'\s*,\s*', ', ', text)        # пробелы вокруг запятой
+
+    # 5. Финальная чистка
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r' ,', ',', text)
+    text = text.strip()
+    return text
+
+def extract_first_date(text: str) -> str:
+    """
+    Извлекает первую дату в формате ДД.ММ (или ДД.ММ.ГГГГ) из строки.
+    Пример: "Экзаменационная сессия: 29.06 – 4.07.2026" -> "29.06"
+    """
+    match = re.search(r'\b(\d{1,2}\.\d{2})(?:\.\d{4})?\b', text)
+    if match:
+        return match.group(1)  # возвращаем только основную часть (ДД.ММ)
+    return ""
+
+import re
+
+def remove_spaces_between_initials(text: str) -> str:
+    """
+    Удаляет пробел между инициалами: "И. О." -> "И.О."
+    Оставляет без изменений даты, сокращения, числа.
+    """
+    # Защищаем даты (цифра.цифра или цифра.цифра.цифра) от изменений
+    date_pattern = r'\b\d{1,2}\.\d{2}(?:\.\d{4})?\b'
+    protected = {}
+
+    def replacer(match):
+        placeholder = f'__DATE_{len(protected)}__'
+        protected[placeholder] = match.group(0)
+        return placeholder
+
+    text = re.sub(date_pattern, replacer, text)
+
+    # Ищем шаблон: заглавная буква (кириллица или латиница), точка, пробелы, заглавная буква, точка
+    # Превращаем в "Буква.Буква." без пробела
+    text = re.sub(r'([A-ZА-ЯЁ])\.\s+([A-ZА-ЯЁ])\.', r'\1.\2.', text)
+
+    # Восстанавливаем даты
+    for placeholder, original in protected.items():
+        text = text.replace(placeholder, original)
+
+    return text
+
+
+def normalize_subgroup(text: str) -> str:
+    """
+    Приводит различные написания подгрупп (п/г1, пг 2, п\\г 2, п/г 1 и т.п.)
+    к единому виду "п/г N", где N — номер группы.
+    """
+    # Шаблон: "п", затем возможные разделители (пробелы, слеш, обратный слеш),
+    # затем "г", затем снова возможные разделители, затем одна или более цифр.
+    pattern = r'\bп\s*[\/\\]?\s*г\s*(\d+)\b'
+    return re.sub(pattern, r'п/г \1', text)

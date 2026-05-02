@@ -10,7 +10,7 @@ from pathlib import Path
 import time
 import aiofiles
 import asyncio
-from parser.preprocess import remove_academic_titles, clean, normalize_rooms, normalize_time, english_to_russian_lookalike
+from parser.preprocess import remove_academic_titles, clean, normalize_rooms, normalize_time, english_to_russian_lookalike, normalize_date_ranges, remove_invalid_dates, extract_first_date, remove_spaces_between_initials, normalize_subgroup
 
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
@@ -201,6 +201,7 @@ def extraction(df, sheet_id):
             additional_info = ""
             session = ""
             vacation = ""
+            session_end_date = None
 
             if "семестр" in str(header).lower():
                 lines = [line.strip() for line in str(header).split("\n") if line.strip()]
@@ -216,6 +217,7 @@ def extraction(df, sheet_id):
 
                         additional_info = "\n".join(lines[2:session_index])
                         session = lines[session_index]
+                        session_end_date = extract_first_date(session)
                         vacation = lines[vacation_index]
                     except StopIteration:
                         print("Не найдены сессия или каникулы в заголовке")
@@ -281,8 +283,13 @@ def extraction(df, sheet_id):
                 room_val = normalize_rooms(room_val)
 
                 subject_val = clean(text=subject_val)
-                # subject_val = remove_academic_titles(text=subject_val)
                 subject_val = english_to_russian_lookalike(text=subject_val)
+                subject_val = normalize_date_ranges(text=subject_val, default_end_date=session_end_date)
+                subject_val = remove_invalid_dates(text=subject_val)
+                subject_val = remove_spaces_between_initials(text=subject_val)
+                subject_val = normalize_subgroup(text=subject_val)
+                # subject_val = remove_academic_titles(text=subject_val)
+                # subject_val = clean(text=subject_val)
 
                 # Добавляем день недели
                 day_of_week = ""
@@ -341,3 +348,4 @@ def fill_merged_cells_safe(file_path, sheet_name):
             for j in range(start_col, end_col + 1):
                 df.iat[i, j] = top_left_value
     return df
+

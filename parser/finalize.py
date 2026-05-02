@@ -85,7 +85,8 @@ async def transform_schedule(raw_data: Dict[str, Any]) -> Dict[str, List[Dict]]:
                 "teachers": teachers,
                 "dates": params.get("dates", ""),
                 "rooms": params.get("rooms", ""),
-                "comment": params.get("comment", ""),
+                # "comment": params.get("comment", ""),
+                "comment": ""
             })
 
     # Группируем по group, weekday, pair_number

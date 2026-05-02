@@ -25,8 +25,8 @@ CHECK_CHANGES_TIMER: int = 60*60
 async def timer():
     try:
         while True:
-            await process_schedule()
             await asyncio.sleep(CHECK_CHANGES_TIMER)
+            await process_schedule()
             logger.info("Запуск парсера...")
     except asyncio.CancelledError:
         logger.info("Таймер парсера остановлен.")

@@ -93,8 +93,8 @@ async def save_data(data, path: str):
         await f.write(json.dumps(data, ensure_ascii=False, indent=4))
 
 
-async def process_schedule():
-    """Основной метод обработки расписания"""
+async def process_schedule(use_chunks: bool = False, chunk_size: int = 12):
+    """Основной метод обработки расписания с разбивкой на чанки"""
     logger.info("Начата обработка расписания")
     # Загрузка из гугл таблиц
     if not await handle_excel_files(latest_excel_path, old_excel_path):
@@ -104,11 +104,38 @@ async def process_schedule():
     # Обработка полученной таблицы
     groups_info = await data_extractor.extract(latest_excel_path)
     groups_info_after_ai = {}
-    for group, data in groups_info.items():
-        prompt_text = user_prompt + "\n" + str(data)
-        group_info_after_ai = await ask_ai(prompt=prompt_text)
-        groups_info_after_ai[group] = {"events": group_info_after_ai}   # создаём ключ и присваиваем значение
-        # break
+
+    for group, group_data in groups_info.items():
+        events_list = group_data.get("events", [])   # список строк
+        if not events_list:
+            groups_info_after_ai[group] = {"events": []}
+            continue
+
+        if not use_chunks: chunk_size = len(events_list)
+
+        all_events = []
+        # Разбиваем список на чанки
+        for i in range(0, len(events_list), chunk_size):
+            chunk = events_list[i:i+chunk_size]
+            prompt_text = user_prompt.format(data=str(chunk))
+            try:
+                chunk_result = await ask_ai(prompt=prompt_text)
+                # chunk_result - список строк, каждая = одно событие
+                if isinstance(chunk_result, list):
+                    all_events.extend(chunk_result)
+                else:
+                    # если вдруг вернулась строка, разбиваем по \n
+                    all_events.extend(chunk_result.split("\n"))
+            except Exception as e:
+                logger.error(f"Ошибка AI для группы {group}, чанк {i//chunk_size}: {e}")
+                # При ошибке можно пропустить чанк или прервать обработку группы
+                # Пропускаем, чтобы не потерять уже обработанное
+                continue
+            # Небольшая задержка между чанками, чтобы не перегружать API
+            await asyncio.sleep(0.5)
+
+        groups_info_after_ai[group] = {"events": all_events}
+        # break  # раскомментируйте, если нужно тестировать на одной группе
 
     # Промежуточное сохранение
     await handle_json_files(groups_info, latest_groups_info_extracted_and_cleaned_path, old_groups_info_extracted_and_cleaned_path)
