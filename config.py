@@ -53,13 +53,9 @@ class BotConfig:
     TOKEN: str = config['testing_bot_token']
     # CHANNEL_CHAT_ID: int = -1003206831079 #main channel
     CHANNEL_CHAT_ID: int = -1003862286446  # testing channel
-    DATABASE_URL: str = "sqlite:///users.db"
-
-    def __init__(self):
-        # Объект бота
-        self.BOT = Bot(token=self.TOKEN)
+    BOT = Bot(token=TOKEN)
         # Диспетчер
-        self.DP = Dispatcher()
+    DP = Dispatcher()
 
     async def send_message_to_user(self, user_id: int, text: str) -> None:
         try:
