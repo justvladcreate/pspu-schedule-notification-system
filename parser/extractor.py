@@ -122,6 +122,8 @@ class DataExtractor:
 
         #Проходимся по всем листам
         for sheet_name in sheet_names[1:]:
+            # if not sheet_name == "1237":
+            #     continue
             df = fill_merged_cells_safe(file_path, sheet_name=sheet_name)
             sheet_gid = None
             if sheet_name in sheets_metadata:

@@ -211,37 +211,31 @@ Examples
 Example 1 – single element, multiple branches
 Input:
 
-text
 discipline info: ПН 15:15
 2.02 - 6.04 Иностранный язык (прак.), п/г 1 ст. преп. Карсукова Н.К. 16.02 - 6.04 Иностранный язык (прак.), п/г 2 преп. Марченко О.В.
 rooms info: IV к. А216, IV к. А224
 Output:
 
-text
 time: ПН 15:15; dates: 2.02 - 6.04; discipline: Иностранный язык; type: прак.; subgroup: п/г 1; teachers: ст. преп. Карсукова Н.К.; rooms: IV к. А216, IV к. А224
 time: ПН 15:15; dates: 16.02 - 6.04; discipline: Иностранный язык; type: прак.; subgroup: п/г 2; teachers: преп. Марченко О.В.; rooms: IV к. А216, IV к. А224
 Example 2 – note inside parentheses kept
 Input:
 
-text
 discipline info: ВТ 15:15
 24.02 - 21.04 Общая и социальная психология (прак.) доц. Баландина Л.Л. 28.04 Общая и социальная психология (ТЕСТИРОВАНИЕ) доц. Баландина Л.Л.
 rooms info: II к. 408
 Output:
 
-text
 time: ВТ 15:15; dates: 24.02 - 21.04; discipline: Общая и социальная психология; type: прак.; subgroup: ; teachers: доц. Баландина Л.Л.; rooms: II к. 408
 time: ВТ 15:15; dates: 28.04; discipline: Общая и социальная психология (ТЕСТИРОВАНИЕ); type: ; subgroup: ; teachers: доц. Баландина Л.Л.; rooms: II к. 408
 Example 3 – stray preposition dropped
 Input:
 
-text
 discipline info: СБ 11:30
 25.04 в История России (прак.) преп. Штейников С.Н.
 rooms info: II к. 302
 Output:
 
-text
 time: СБ 11:30; dates: 25.04; discipline: История России; type: прак.; subgroup: ; teachers: преп. Штейников С.Н.; rooms: II к. 302
 Apply these instructions to every input string you receive.
 
